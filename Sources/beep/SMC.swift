@@ -52,6 +52,7 @@ struct SMCKeyData_t {
 // MARK: - SMC Constants
 
 private let kSMCReadKey: UInt8 = 5
+private let kSMCWriteKey: UInt8 = 6
 private let kSMCGetKeyInfo: UInt8 = 9
 private let kSMCGetKeyFromIndex: UInt8 = 8
 private let kKernelIndexSMC: UInt32 = 2
@@ -75,6 +76,8 @@ enum SMCError: Error, CustomStringConvertible {
     case couldNotOpenConnection(kern_return_t)
     case keyNotFound(String)
     case readError(kern_return_t)
+    case writeError(kern_return_t)
+    case writeFailed(String)
 
     var description: String {
         switch self {
@@ -86,6 +89,10 @@ enum SMCError: Error, CustomStringConvertible {
             return "SMC key '\(key)' not found"
         case .readError(let code):
             return "SMC read failed (error: \(code))"
+        case .writeError(let code):
+            return "SMC write failed (error: \(code))"
+        case .writeFailed(let msg):
+            return "SMC write failed: \(msg)"
         }
     }
 }
@@ -172,6 +179,32 @@ class SMCConnection {
     func readUInt8(_ key: String) -> UInt8? {
         guard let value = try? readKey(key) else { return nil }
         return value.bytes.0
+    }
+
+    // MARK: - Key Writing
+
+    /// Write a value to an SMC key. This is more risky than reading — use with caution.
+    func writeKey(_ key: String, value: UInt8) throws {
+        // Step 1: Get key info to know the data type and size
+        var input = SMCKeyData_t()
+        input.key = Self.fourCharCode(key)
+        input.data8 = kSMCGetKeyInfo
+
+        var output = SMCKeyData_t()
+        try callSMC(input: &input, output: &output)
+
+        // Step 2: Verify it's a ui8 type (safe to write a single byte)
+        guard SMCDataType(rawValue: output.keyInfo.dataType) == .ui8 else {
+            throw SMCError.writeFailed("Key '\(key)' is not ui8 type (type: \(Self.dataTypeName(output.keyInfo.dataType)))")
+        }
+
+        // Step 3: Write the value
+        input.keyInfo = output.keyInfo
+        input.data8 = kSMCWriteKey
+        input.bytes.0 = value
+
+        output = SMCKeyData_t()
+        try callSMC(input: &input, output: &output)
     }
 
     // MARK: - Value Parsing

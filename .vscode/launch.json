@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:beep}",
+      "name": "Debug beep",
+      "target": "beep",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug beep"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:beep}",
+      "name": "Release beep",
+      "target": "beep",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release beep"
+    }
+  ]
+}
