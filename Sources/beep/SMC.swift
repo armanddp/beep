@@ -184,7 +184,8 @@ class SMCConnection {
     // MARK: - Key Writing
 
     /// Write a value to an SMC key. This is more risky than reading — use with caution.
-    func writeKey(_ key: String, value: UInt8) throws {
+    /// Supports ui8, ui16, ui32, and flag types.
+    func writeKey(_ key: String, value: UInt32) throws {
         // Step 1: Get key info to know the data type and size
         var input = SMCKeyData_t()
         input.key = Self.fourCharCode(key)
@@ -193,16 +194,31 @@ class SMCConnection {
         var output = SMCKeyData_t()
         try callSMC(input: &input, output: &output)
 
-        // Step 2: Verify it's a ui8 type (safe to write a single byte)
-        guard SMCDataType(rawValue: output.keyInfo.dataType) == .ui8 else {
-            throw SMCError.writeFailed("Key '\(key)' is not ui8 type (type: \(Self.dataTypeName(output.keyInfo.dataType)))")
+        // Step 2: Write the value based on the key's data type
+        let dataType = SMCDataType(rawValue: output.keyInfo.dataType)
+
+        input.keyInfo = output.keyInfo
+        input.data8 = kSMCWriteKey
+
+        // Format the value according to the data type
+        switch dataType {
+        case .ui8, .flag:
+            input.bytes.0 = UInt8(value & 0xFF)
+        case .ui16:
+            // Big-endian ui16
+            input.bytes.0 = UInt8((value >> 8) & 0xFF)
+            input.bytes.1 = UInt8(value & 0xFF)
+        case .ui32:
+            // Big-endian ui32
+            input.bytes.0 = UInt8((value >> 24) & 0xFF)
+            input.bytes.1 = UInt8((value >> 16) & 0xFF)
+            input.bytes.2 = UInt8((value >> 8) & 0xFF)
+            input.bytes.3 = UInt8(value & 0xFF)
+        default:
+            throw SMCError.writeFailed("Key '\(key)' has unsupported type for writing: \(Self.dataTypeName(output.keyInfo.dataType))")
         }
 
         // Step 3: Write the value
-        input.keyInfo = output.keyInfo
-        input.data8 = kSMCWriteKey
-        input.bytes.0 = value
-
         output = SMCKeyData_t()
         try callSMC(input: &input, output: &output)
     }
