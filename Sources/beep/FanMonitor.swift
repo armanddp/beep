@@ -57,6 +57,19 @@ struct ThermalReading {
 
 class FanMonitor {
     let smc: SMCConnection
+    private let fanReadRetries = 3
+    private let temperatureReadRetries = 2
+    private let staleTTL: TimeInterval = 5
+    private let discoveryInterval: TimeInterval = 30
+
+    private var cachedFanCount: Int?
+    private var lastFanReadAt: [Int: Date] = [:]
+    private var cachedFans: [Int: FanInfo] = [:]
+
+    private var activeTemperatureSensors: [(key: String, label: String)] = []
+    private var cachedTemperatures: [String: ThermalReading] = [:]
+    private var lastTemperatureReadAt: [String: Date] = [:]
+    private var lastDiscoveryAt = Date.distantPast
 
     init(smc: SMCConnection) {
         self.smc = smc
@@ -65,16 +78,20 @@ class FanMonitor {
     // MARK: - Fan Data
 
     var fanCount: Int {
-        Int(smc.readUInt8("FNum") ?? 0)
+        if let count = smc.readUInt8("FNum"), count > 0 {
+            cachedFanCount = Int(count)
+            return Int(count)
+        }
+        return cachedFanCount ?? 0
     }
 
     func readFan(_ index: Int) -> FanInfo? {
         let prefix = "F\(index)"
-        guard let actual = smc.readFloat("\(prefix)Ac") else { return nil }
+        guard let actual = readValidatedFanValue("\(prefix)Ac") else { return nil }
 
-        let target = smc.readFloat("\(prefix)Tg")
-        let minSpeed = smc.readFloat("\(prefix)Mn")
-        let maxSpeed = smc.readFloat("\(prefix)Mx")
+        let target = readValidatedFanValue("\(prefix)Tg")
+        let minSpeed = readValidatedFanValue("\(prefix)Mn")
+        let maxSpeed = readValidatedFanValue("\(prefix)Mx")
 
         // On the 14" MacBook Pro, fan 0 is left, fan 1 is right
         let name: String
@@ -94,10 +111,23 @@ class FanMonitor {
         )
     }
 
-    func readAllFans() -> [FanInfo] {
+    func readAllFans(now: Date = Date()) -> [FanInfo] {
         let count = fanCount
-        guard count > 0 else { return [] }
-        return (0..<count).compactMap { readFan($0) }
+        guard count > 0 else {
+            return fallbackFansIfFresh(now: now)
+        }
+
+        var fans: [FanInfo] = []
+        for idx in 0..<count {
+            if let fan = readFanWithRetry(idx, now: now) {
+                fans.append(fan)
+            }
+        }
+
+        if fans.isEmpty {
+            return fallbackFansIfFresh(now: now)
+        }
+        return fans
     }
 
     // MARK: - Temperature Data
@@ -131,19 +161,7 @@ class FanMonitor {
             ("TN0P", "SSD"),
         ]
 
-        var readings: [ThermalReading] = []
-        var seenLabels = Set<String>()
-
-        for (key, label) in candidates {
-            guard !seenLabels.contains(label) else { continue }
-            if let temp = smc.readFloat(key),
-               temp > 1, temp < 150 {  // >1 filters out 0.0°C "ghost" keys
-                readings.append(ThermalReading(key: key, label: label, temperature: temp))
-                seenLabels.insert(label)
-            }
-        }
-
-        return readings
+        return readTemperatures(candidates: candidates)
     }
 
     // MARK: - Warning Detection
@@ -185,5 +203,98 @@ class FanMonitor {
         }
 
         return warnings
+    }
+
+    // MARK: - Internal Helpers
+
+    private func readFanWithRetry(_ index: Int, now: Date) -> FanInfo? {
+        for _ in 0..<fanReadRetries {
+            if let fan = readFan(index) {
+                cachedFans[index] = fan
+                lastFanReadAt[index] = now
+                return fan
+            }
+        }
+
+        if let cached = cachedFans[index],
+           let lastSeen = lastFanReadAt[index],
+           now.timeIntervalSince(lastSeen) <= staleTTL {
+            return cached
+        }
+        return nil
+    }
+
+    private func fallbackFansIfFresh(now: Date) -> [FanInfo] {
+        let fresh = cachedFans.values.filter { fan in
+            guard let lastSeen = lastFanReadAt[fan.index] else { return false }
+            return now.timeIntervalSince(lastSeen) <= staleTTL
+        }
+        return fresh.sorted { $0.index < $1.index }
+    }
+
+    private func readValidatedFanValue(_ key: String) -> Float? {
+        guard let raw = smc.readFloat(key), raw.isFinite else { return nil }
+        if raw < 0 || raw > 20_000 {
+            return nil
+        }
+        return raw
+    }
+
+    private func readTemperatures(candidates: [(key: String, label: String)]) -> [ThermalReading] {
+        let now = Date()
+
+        if activeTemperatureSensors.isEmpty || now.timeIntervalSince(lastDiscoveryAt) >= discoveryInterval {
+            activeTemperatureSensors = discoverTemperatureSensors(candidates: candidates)
+            lastDiscoveryAt = now
+        }
+
+        var readings: [ThermalReading] = []
+        for (key, label) in activeTemperatureSensors {
+            if let reading = readTemperatureWithRetry(key: key, label: label, now: now) {
+                readings.append(reading)
+            }
+        }
+
+        return readings
+    }
+
+    private func discoverTemperatureSensors(
+        candidates: [(key: String, label: String)]
+    ) -> [(key: String, label: String)] {
+        var sensors: [(key: String, label: String)] = []
+        var seenLabels = Set<String>()
+
+        for (key, label) in candidates {
+            guard !seenLabels.contains(label) else { continue }
+            if readValidTemperature(key: key) != nil {
+                sensors.append((key, label))
+                seenLabels.insert(label)
+            }
+        }
+        return sensors
+    }
+
+    private func readTemperatureWithRetry(key: String, label: String, now: Date) -> ThermalReading? {
+        for _ in 0..<temperatureReadRetries {
+            if let temp = readValidTemperature(key: key) {
+                let reading = ThermalReading(key: key, label: label, temperature: temp)
+                cachedTemperatures[key] = reading
+                lastTemperatureReadAt[key] = now
+                return reading
+            }
+        }
+
+        if let cached = cachedTemperatures[key],
+           let lastSeen = lastTemperatureReadAt[key],
+           now.timeIntervalSince(lastSeen) <= staleTTL {
+            return cached
+        }
+        return nil
+    }
+
+    private func readValidTemperature(key: String) -> Float? {
+        guard let temp = smc.readFloat(key), temp.isFinite else { return nil }
+        guard temp > 1, temp < 150 else { return nil }
+        return temp
     }
 }
