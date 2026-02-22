@@ -27,6 +27,7 @@ struct Display {
     }
 
     static func render(
+        systemDescription: String,
         fans: [FanInfo],
         temperatures: [ThermalReading],
         warnings: [String],
@@ -37,7 +38,7 @@ struct Display {
 
         // Header
         print("\(ANSI.bold)\(ANSI.cyan)beep\(ANSI.reset) \(ANSI.dim)Fan & Thermal Monitor\(ANSI.reset)")
-        print("\(ANSI.dim)MacBook Pro 14\u{22} M2 Pro  \u{2502}  \(now)\(ANSI.reset)")
+        print("\(ANSI.dim)\(systemDescription)  \u{2502}  \(now)\(ANSI.reset)")
         print("\(ANSI.dim)\(String(repeating: "\u{2500}", count: 56))\(ANSI.reset)")
         print()
 

@@ -184,6 +184,7 @@ if !runOnce {
 }
 
 let monitor = FanMonitor(smc: smc)
+let systemIdentity = SystemIdentity.current()
 
 repeat {
     let fans = monitor.readAllFans()
@@ -194,6 +195,7 @@ repeat {
         Display.clear()
     }
     Display.render(
+        systemDescription: systemIdentity.headerLine,
         fans: fans,
         temperatures: temps,
         warnings: warnings,
