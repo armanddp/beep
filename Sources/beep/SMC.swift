@@ -215,7 +215,9 @@ class SMCConnection {
             input.bytes.2 = UInt8((value >> 8) & 0xFF)
             input.bytes.3 = UInt8(value & 0xFF)
         default:
-            throw SMCError.writeFailed("Key '\(key)' has unsupported type for writing: \(Self.dataTypeName(output.keyInfo.dataType))")
+            let typeName = Self.dataTypeName(output.keyInfo.dataType)
+            let typeCode = String(format: "0x%08X", output.keyInfo.dataType)
+            throw SMCError.writeFailed("Key '\(key)' has unsupported type '\(typeName)' (\(typeCode)) for writing")
         }
 
         // Step 3: Write the value
