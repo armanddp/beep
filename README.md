@@ -61,6 +61,7 @@ sudo .build/debug/beep
 | `--once` | Run a single check and exit instead of live monitoring |
 | `--interval N` | Set the refresh interval in seconds (default: `1.0`, minimum: `0.5`) |
 | `--silence` | Temporarily mute macOS alert sounds while monitoring (see below) |
+| `--disable-fan N` | Disable fan N in the SMC (requires sudo) |
 | `--dump` | Enumerate and print all readable SMC keys with their values, then exit |
 | `--help`, `-h` | Show usage help |
 
@@ -91,7 +92,31 @@ Temporarily mutes macOS **alert sounds** to suppress thermal warning beeps while
 
 The footer shows an **Alerts muted** indicator while silencing is active. This works by setting the macOS alert volume to 0 via `osascript` — it does not affect media playback volume.
 
-> **Note:** If the beeping originates from SMC firmware directly (bypassing CoreAudio), this flag will have no effect. In that case, the beeps are hardware-level and can only be resolved by repairing the fan.
+> **Note:** If the beeping originates from SMC firmware directly (bypassing CoreAudio), this flag will have no effect. In that case, the beeps are hardware-level.
+
+### `--disable-fan`
+
+**Permanently disables a stuck or dead fan** at the SMC level, preventing the system from trying to spin it up (and thus stopping the beeping):
+
+```bash
+sudo .build/debug/beep --disable-fan 1     # Disable right fan
+sudo .build/debug/beep --disable-fan 0     # Disable left fan
+```
+
+This flag:
+- Requires `sudo` (writes directly to the SMC)
+- Disables the specified fan by writing to the `FnEn` SMC key
+- Stops the SMC from repeatedly trying to spin up that fan
+- Eliminates beeps from the non-responsive fan
+- **Cannot be undone without a system reboot** (or writing a new value back)
+
+**Use this only if:**
+- You've confirmed with `beep` that a fan is not spinning (0 RPM)
+- The system is beeping frequently because it keeps trying to start that fan
+- You're waiting for a hardware repair and want to silence the repeated alerts
+- You understand this disables thermal management for that fan
+
+**Safety note:** Disabling a fan removes an important cooling mechanism. This is safe in the short term for a dead fan on an idle system, but avoid running heavy workloads with a disabled cooling fan.
 
 ### `--dump`
 
