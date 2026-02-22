@@ -196,28 +196,44 @@ class SMCConnection {
 
         // Step 2: Write the value based on the key's data type
         let dataType = SMCDataType(rawValue: output.keyInfo.dataType)
+        let dataSize = Int(output.keyInfo.dataSize)
 
         input.keyInfo = output.keyInfo
         input.data8 = kSMCWriteKey
 
-        // Format the value according to the data type
-        switch dataType {
-        case .ui8, .flag:
+        // Format the value according to the data type or size
+        switch (dataType, dataSize) {
+        case (.ui8?, _), (.flag?, _):
             input.bytes.0 = UInt8(value & 0xFF)
-        case .ui16:
+        case (.ui16?, _):
             // Big-endian ui16
             input.bytes.0 = UInt8((value >> 8) & 0xFF)
             input.bytes.1 = UInt8(value & 0xFF)
-        case .ui32:
+        case (.ui32?, _):
             // Big-endian ui32
             input.bytes.0 = UInt8((value >> 24) & 0xFF)
             input.bytes.1 = UInt8((value >> 16) & 0xFF)
             input.bytes.2 = UInt8((value >> 8) & 0xFF)
             input.bytes.3 = UInt8(value & 0xFF)
+        case (nil, 1):
+            // Unknown type but 1 byte — write as ui8
+            input.bytes.0 = UInt8(value & 0xFF)
+        case (nil, 2):
+            // Unknown type but 2 bytes — write as big-endian ui16
+            input.bytes.0 = UInt8((value >> 8) & 0xFF)
+            input.bytes.1 = UInt8(value & 0xFF)
+        case (nil, 4):
+            // Unknown type but 4 bytes — write as big-endian ui32
+            input.bytes.0 = UInt8((value >> 24) & 0xFF)
+            input.bytes.1 = UInt8((value >> 16) & 0xFF)
+            input.bytes.2 = UInt8((value >> 8) & 0xFF)
+            input.bytes.3 = UInt8(value & 0xFF)
+        case (nil, 0):
+            // Some keys (like F1En on Apple Silicon) report 0 bytes but can still be written.
+            // Default to single byte write.
+            input.bytes.0 = UInt8(value & 0xFF)
         default:
-            let typeName = Self.dataTypeName(output.keyInfo.dataType)
-            let typeCode = String(format: "0x%08X", output.keyInfo.dataType)
-            throw SMCError.writeFailed("Key '\(key)' has unsupported type '\(typeName)' (\(typeCode)) for writing")
+            throw SMCError.writeFailed("Key '\(key)' has unknown type (0x\(String(format: "%08X", output.keyInfo.dataType))) with size \(dataSize) bytes")
         }
 
         // Step 3: Write the value

@@ -127,6 +127,15 @@ if let fanNum = disableFanIndex {
     // Try to disable the fan
     let fanEnableKey = "F\(fanNum)En"
     do {
+        // First, check what type the key is
+        print("Checking SMC key '\(fanEnableKey)'...")
+        if let keyValue = try? smc.readKey(fanEnableKey) {
+            let typeName = SMCConnection.dataTypeName(keyValue.dataType)
+            let typeCode = String(format: "0x%08X", keyValue.dataType)
+            print("  Type: \(typeName) (\(typeCode))")
+            print("  Current value: \(keyValue.bytes.0)")
+        }
+
         print("Writing to SMC key '\(fanEnableKey)'...")
         try smc.writeKey(fanEnableKey, value: 0)
         print("\(ANSI.green)✓ Fan \(fanNum) disabled successfully\(ANSI.reset)")
